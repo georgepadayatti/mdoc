@@ -80,12 +80,12 @@ func (d DataItem) MarshalCBOR() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Wrap in tag 24
+	// Wrap in tag 24 using the canonical encoding mode
 	tag := cbor.Tag{
 		Number:  TagDataItem,
 		Content: innerBytes,
 	}
-	return cbor.Marshal(tag)
+	return encMode.Marshal(tag)
 }
 
 // UnmarshalCBOR implements cbor.Unmarshaler for CBOR tag 24.

@@ -36,7 +36,7 @@ func TestDocumentAddIssuerNameSpace(t *testing.T) {
 }
 
 func TestDocumentAddValidityInfo(t *testing.T) {
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Second)
 	validUntil := now.AddDate(2, 0, 0)
 
 	doc := NewDocument(DocTypeMDL).

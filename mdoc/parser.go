@@ -3,6 +3,7 @@ package mdoc
 import (
 	"fmt"
 
+	fxcbor "github.com/fxamacker/cbor/v2"
 	"github.com/georgepadayatti/mdoc/cbor"
 	"github.com/veraison/go-cose"
 )
@@ -278,6 +279,18 @@ func parseIssuerAuth(raw any) (*IssuerAuth, error) {
 			return nil, WrapParseError("failed to encode issuerAuth", err)
 		}
 		return ParseIssuerAuth(encoded)
+	case fxcbor.Tag:
+		// Handle Tag 24 wrapped COSE_Sign1 from other implementations
+		switch content := v.Content.(type) {
+		case []byte:
+			return ParseIssuerAuth(content)
+		default:
+			encoded, err := cbor.Encode(v.Content)
+			if err != nil {
+				return nil, WrapParseError("failed to encode tagged issuerAuth", err)
+			}
+			return ParseIssuerAuth(encoded)
+		}
 	default:
 		return nil, NewParseError(fmt.Sprintf("unexpected issuerAuth type: %T", raw))
 	}

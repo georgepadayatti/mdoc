@@ -75,22 +75,46 @@ func (d *IssuerSignedDocument) Prepare() (map[string]any, error) {
 		return nil, fmt.Errorf("failed to encode IssuerAuth: %w", err)
 	}
 
+	// Strip CBOR Tag 18 (COSE_Sign1_Tagged → COSE_Sign1) to match
+	// ISO 18013-5 IssuerAuth = COSE_Sign1 (untagged array).
+	// go-cose always produces Tag 18 (0xd2), but the spec and reference
+	// implementations (pymdoccbor) use the untagged form.
+	if len(issuerAuthBytes) > 0 && issuerAuthBytes[0] == 0xd2 {
+		issuerAuthBytes = issuerAuthBytes[1:]
+	}
+
 	return map[string]any{
 		"docType": string(d.DocType),
 		"issuerSigned": map[string]any{
 			"nameSpaces": nameSpaces,
-			"issuerAuth": cbor.NewDataItemFromBytes(issuerAuthBytes),
+			"issuerAuth": cbor.RawMessage(issuerAuthBytes),
 		},
 	}, nil
 }
 
-// Encode returns the CBOR-encoded representation.
+// Encode returns the CBOR-encoded representation of the full document
+// (including docType wrapper).
 func (d *IssuerSignedDocument) Encode() ([]byte, error) {
 	prepared, err := d.Prepare()
 	if err != nil {
 		return nil, err
 	}
 	return cbor.Encode(prepared)
+}
+
+// EncodeIssuerSigned returns the CBOR-encoded representation of just the
+// IssuerSigned structure (nameSpaces + issuerAuth), without the docType wrapper.
+// This is the format required by OID4VCI Appendix A.2.4.
+func (d *IssuerSignedDocument) EncodeIssuerSigned() ([]byte, error) {
+	prepared, err := d.Prepare()
+	if err != nil {
+		return nil, err
+	}
+	issuerSigned, ok := prepared["issuerSigned"]
+	if !ok {
+		return nil, fmt.Errorf("issuerSigned not found in prepared document")
+	}
+	return cbor.Encode(issuerSigned)
 }
 
 // ValidateDigests validates all issuer-signed item digests against the MSO.

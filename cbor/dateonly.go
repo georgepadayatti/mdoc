@@ -59,12 +59,12 @@ func (d DateOnly) Time() time.Time {
 
 // MarshalCBOR implements cbor.Marshaler for CBOR tag 1004.
 func (d DateOnly) MarshalCBOR() ([]byte, error) {
-	// Tag 1004 with text string value
+	// Tag 1004 with text string value, using canonical encoding mode
 	tag := cbor.Tag{
 		Number:  TagDateOnly,
 		Content: d.String(),
 	}
-	return cbor.Marshal(tag)
+	return encMode.Marshal(tag)
 }
 
 // UnmarshalCBOR implements cbor.Unmarshaler for CBOR tag 1004.

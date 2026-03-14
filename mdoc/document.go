@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/georgepadayatti/mdoc/cbor"
@@ -21,7 +22,7 @@ type Document struct {
 
 // NewDocument creates a new Document builder with the specified document type.
 func NewDocument(docType DocType) *Document {
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Second)
 	return &Document{
 		docType:          docType,
 		issuerNameSpaces: make(map[string][]*IssuerSignedItem),
@@ -50,80 +51,91 @@ func (d *Document) AddIssuerNameSpace(namespace string, values map[string]any) *
 	return d
 }
 
-// processValue handles special value processing for MDL namespace.
-func (d *Document) processValue(namespace, key string, value any) any {
-	// Only process MDL namespace
-	if namespace != NamespaceMDL {
-		return value
-	}
+// dateFields defines attribute names that should be encoded with CBOR Tag 1004.
+// Matches Python pymdoccbor settings.CBORTAGS_ATTR_MAP.
+var dateFields = map[string]bool{
+	"birth_date":    true,
+	"issue_date":    true,
+	"expiry_date":   true,
+	"issuance_date": true,
+}
 
-	// Handle date fields
-	dateFields := map[string]bool{
-		"birth_date":  true,
-		"issue_date":  true,
-		"expiry_date": true,
-	}
-
-	if dateFields[key] {
-		switch v := value.(type) {
-		case string:
-			// Parse string to DateOnly
-			dateOnly, err := cbor.ParseDateOnly(v)
-			if err == nil {
-				return dateOnly
-			}
-		case time.Time:
-			return cbor.DateOnlyFromTime(v)
-		case cbor.DateOnly:
-			return v
+// tryConvertDate attempts to convert a value to DateOnly (Tag 1004).
+func tryConvertDate(value any) any {
+	switch v := value.(type) {
+	case string:
+		dateOnly, err := cbor.ParseDateOnly(v)
+		if err == nil {
+			return dateOnly
 		}
+	case time.Time:
+		return cbor.DateOnlyFromTime(v)
+	case cbor.DateOnly:
+		return v
 	}
-
-	// Handle driving_privileges array
-	if key == "driving_privileges" {
-		if privileges, ok := value.([]map[string]any); ok {
-			processed := make([]map[string]any, len(privileges))
-			for i, priv := range privileges {
-				processed[i] = d.processDrivingPrivilege(priv)
-			}
-			return processed
-		}
-		if privileges, ok := value.([]any); ok {
-			processed := make([]any, len(privileges))
-			for i, priv := range privileges {
-				if privMap, ok := priv.(map[string]any); ok {
-					processed[i] = d.processDrivingPrivilege(privMap)
-				} else {
-					processed[i] = priv
-				}
-			}
-			return processed
-		}
-	}
-
 	return value
 }
 
-// processDrivingPrivilege processes a single driving privilege entry.
-func (d *Document) processDrivingPrivilege(priv map[string]any) map[string]any {
-	result := make(map[string]any)
-	for k, v := range priv {
-		if k == "issue_date" || k == "expiry_date" {
-			switch val := v.(type) {
-			case string:
-				dateOnly, err := cbor.ParseDateOnly(val)
-				if err == nil {
-					result[k] = dateOnly
-				} else {
-					result[k] = v
-				}
-			case time.Time:
-				result[k] = cbor.DateOnlyFromTime(val)
-			default:
-				result[k] = v
+// normalizeValue converts float64 whole numbers to int64 so they encode as
+// CBOR integers rather than floats. Go's encoding/json decodes all JSON
+// numbers as float64, but CBOR distinguishes int from float.
+func normalizeValue(value any) any {
+	switch v := value.(type) {
+	case float64:
+		if v == math.Trunc(v) && !math.IsInf(v, 0) && !math.IsNaN(v) {
+			return int64(v)
+		}
+	}
+	return value
+}
+
+// processValue handles Tag 1004 date conversion for all namespaces,
+// float-to-int normalization, and recursively processes nested structures.
+func (d *Document) processValue(namespace, key string, value any) any {
+	// Apply Tag 1004 to top-level date fields
+	if dateFields[key] {
+		return tryConvertDate(value)
+	}
+
+	// Recursively process nested maps
+	if m, ok := value.(map[string]any); ok {
+		return d.processMap(m)
+	}
+
+	// Recursively process nested lists (skip "nationality" per Python)
+	if key != "nationality" {
+		if list, ok := value.([]map[string]any); ok {
+			processed := make([]map[string]any, len(list))
+			for i, item := range list {
+				processed[i] = d.processMap(item)
 			}
+			return processed
+		}
+		if list, ok := value.([]any); ok {
+			processed := make([]any, len(list))
+			for i, item := range list {
+				if itemMap, ok := item.(map[string]any); ok {
+					processed[i] = d.processMap(itemMap)
+				} else {
+					processed[i] = normalizeValue(item)
+				}
+			}
+			return processed
+		}
+	}
+
+	return normalizeValue(value)
+}
+
+// processMap applies Tag 1004 conversion to date fields and float-to-int
+// normalization within a map.
+func (d *Document) processMap(m map[string]any) map[string]any {
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		if dateFields[k] {
+			result[k] = tryConvertDate(v)
 		} else {
-			result[k] = v
+			result[k] = normalizeValue(v)
 		}
 	}
 	return result
@@ -190,20 +202,21 @@ func (d *Document) AddDeviceKeyInfo(deviceKey any) *Document {
 }
 
 // AddValidityInfo sets the validity information.
+// Times are truncated to second precision to match ISO 18013-5 encoding.
 func (d *Document) AddValidityInfo(info ValidityInfo) *Document {
 	if !info.Signed.IsZero() {
-		d.validityInfo.Signed = info.Signed.UTC()
+		d.validityInfo.Signed = info.Signed.UTC().Truncate(time.Second)
 	}
 	if !info.ValidFrom.IsZero() {
-		d.validityInfo.ValidFrom = info.ValidFrom.UTC()
+		d.validityInfo.ValidFrom = info.ValidFrom.UTC().Truncate(time.Second)
 	} else {
 		d.validityInfo.ValidFrom = d.validityInfo.Signed
 	}
 	if !info.ValidUntil.IsZero() {
-		d.validityInfo.ValidUntil = info.ValidUntil.UTC()
+		d.validityInfo.ValidUntil = info.ValidUntil.UTC().Truncate(time.Second)
 	}
 	if info.ExpectedUpdate != nil {
-		t := info.ExpectedUpdate.UTC()
+		t := info.ExpectedUpdate.UTC().Truncate(time.Second)
 		d.validityInfo.ExpectedUpdate = &t
 	}
 	return d

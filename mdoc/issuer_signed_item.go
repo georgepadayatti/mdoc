@@ -75,12 +75,19 @@ func (i *IssuerSignedItem) MustEncode() []byte {
 }
 
 // CalculateDigest calculates the digest of this item using the specified algorithm.
+// Per ISO 18013-5 Section 9.1.2.4, the item is wrapped in CBOR Tag 24 before hashing:
+// digest = SHA-256(CBOR_encode(Tag24(CBOR_encode(IssuerSignedItem))))
 func (i *IssuerSignedItem) CalculateDigest(alg DigestAlgorithm) ([]byte, error) {
 	encoded, err := i.Encode()
 	if err != nil {
 		return nil, err
 	}
-	return CalculateDigest(alg, encoded)
+	// Wrap in Tag 24 before hashing
+	tag24Encoded, err := cbor.Encode(cbor.NewDataItemFromBytes(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode Tag 24 wrapper: %w", err)
+	}
+	return CalculateDigest(alg, tag24Encoded)
 }
 
 // IsValid validates this item against the MSO digests.

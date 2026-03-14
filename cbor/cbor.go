@@ -53,7 +53,7 @@ func init() {
 
 	// Create encoding mode
 	encMode, err = cbor.EncOptions{
-		Time:    cbor.TimeRFC3339Nano,
+		Time:    cbor.TimeRFC3339,
 		TimeTag: cbor.EncTagRequired,
 		Sort:    cbor.SortCanonical,
 	}.EncModeWithTags(tagSet)
@@ -88,6 +88,9 @@ func DecodeToMap(data []byte) (map[any]any, error) {
 	}
 	return result, nil
 }
+
+// RawMessage is a raw encoded CBOR value that is included as-is during encoding.
+type RawMessage = cbor.RawMessage
 
 // MustEncode encodes a value to CBOR bytes and panics on error.
 func MustEncode(v any) []byte {

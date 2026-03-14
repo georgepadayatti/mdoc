@@ -63,22 +63,27 @@ func SignMSO(mso *MSO, params SignParams) (*IssuerAuth, error) {
 		return nil, err
 	}
 
-	// Create certificate chain bytes for x5chain
-	certChainBytes := make([][]byte, len(certs))
-	for i, cert := range certs {
-		certChainBytes[i] = cert.Raw
+	// Find the end-entity (document signer) certificate.
+	// Only the end-entity cert goes into x5chain, matching pymdoccbor behaviour
+	// and what holder wallets expect. The IACA/CA cert is NOT included.
+	var endEntityCert *x509.Certificate
+	for _, cert := range certs {
+		if !cert.IsCA {
+			endEntityCert = cert
+			break
+		}
+	}
+	if endEntityCert == nil {
+		// Fallback: use the first certificate
+		endEntityCert = certs[0]
 	}
 
 	// Create COSE Sign1 message
 	msg := cose.NewSign1Message()
 	msg.Headers.Protected.SetAlgorithm(cose.Algorithm(params.Algorithm))
 
-	// Set x5chain in unprotected headers
-	if len(certChainBytes) == 1 {
-		msg.Headers.Unprotected[HeaderX5Chain] = certChainBytes[0]
-	} else {
-		msg.Headers.Unprotected[HeaderX5Chain] = certChainBytes
-	}
+	// Set x5chain in unprotected headers — single bstr per RFC 9360
+	msg.Headers.Unprotected[HeaderX5Chain] = endEntityCert.Raw
 
 	// Set key ID if provided
 	if len(params.KeyID) > 0 {
